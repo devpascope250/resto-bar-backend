@@ -1,0 +1,184 @@
+// schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  firstName String
+  lastName  String
+  gender    Gender
+  email     String   @unique
+  phone     String?
+  role      Role
+  password  String
+  status    Status @default(Active)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company[]
+  companyWorker CompanyWorker[]
+  attendance Attendance[]
+  requestLeave RequestLeave[]
+  @@map("users")
+}
+
+model Company {
+  id             Int      @id @default(autoincrement())
+  name           String
+  address        String?
+  longitude      Float?
+  latitude       Float?
+  radius         Int?
+  type            CompanyType
+  userId        Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workingHours   WorkingHours[]
+  companyWorkers CompanyWorker[]
+  companyLeaves  CompanyLeaveSetting[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("companies")
+}
+
+model WorkingHours {
+  id        Int      @id @default(autoincrement())
+  day       Days
+  startTime String
+  endTime   String
+  companyId  Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("working_hours")
+}
+
+model CompanyWorker {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  workerId  Int
+  worker    User     @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  status    Status @default(Active)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Attendance {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  latitude  Float?
+  longitude Float?
+  status    AttendanceStatus
+  enventType AttendanceEventType
+  createdAt DateTime @default(now())
+}
+
+model RequestLeave {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveSettingId Int
+  leaveSetting CompanyLeaveSetting @relation(fields: [leaveSettingId], references: [id], onDelete: Cascade)
+  days      Int
+  startDate DateTime
+  endDate   DateTime
+  reason    String
+  status    LeaveStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CompanyLeaveSetting {
+  id        Int      @id @default(autoincrement())
+  days      Int
+  type  LeaveType
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leaveRequests RequestLeave[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([companyId, type]) // Add this line
+}
+
+model Qrcode {
+  id        Int      @id @default(autoincrement())
+  type      String   // e.g. "EDIT_COMPANY_LOCATION"
+  entityId  Int      // the companyId or userId the QR is tied to
+  value     String   @unique // random token (nonce, UUID, etc.)
+  createdAt DateTime @default(now())
+  expiredAt DateTime
+
+  @@index([value])
+  @@index([expiredAt])
+}
+
+
+enum LeaveType {
+  Sick
+  Annual
+  Maternity
+  Paternity
+  Vacation
+  Personal
+  Other
+}
+
+enum Days {
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+  Saturday
+  Sunday
+}
+
+enum Role {
+  Admin
+  User
+  Worker
+}
+
+enum Status {
+  Active
+  Inactive
+}
+
+enum Gender {
+  Male
+  Female
+  Other
+}
+
+enum CompanyType {
+  Main
+  Branch
+}
+
+enum AttendanceStatus {
+  In
+  Out
+}
+
+enum AttendanceEventType {
+  Success
+  Failed
+  Error
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+//ElTUga3XbXXio3gLkOJv
