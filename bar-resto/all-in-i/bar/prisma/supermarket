@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+url      = env("DATABASE_URL_SUPERMARKET")
+}
+
+// ================== ENUMS ==================
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  LOW_STOCK
+}
+
+enum ProductType{
+    BEVERAGE
+    FOOD
+    OTHER
+
+}
+
+enum OrderStatus {
+    PENDING
+    COMPLETED
+    CANCELLED
+}
+
+enum StockOutType {
+  SALE
+  KITCHEN_USE
+  DAMAGED
+  EXPIRED
+  THEFT
+}
+
+// ================== MODELS ==================
+model Product {
+  id          Int         @id @default(autoincrement())
+  partnerId   String
+  productType ProductType
+  name        String
+  price       Float
+  currentStock Int        @default(0) // Add this for quick stock queries
+  lowStockThreshold Int   @default(10)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  stockIns    StockIn[]
+  stockOuts   StockOut[]
+  
+  @@index([partnerId])
+  @@index([name])
+  @@index([currentStock]) // Critical for stock queries
+  @@index([productType, currentStock])
+}
+
+model StockIn {
+  id           Int        @id @default(autoincrement())
+  productId    Int
+  userId       String
+  quantity     Int?
+  dozens       Int?        @default(0)
+  price        Float      @default(0)
+  totalPrice   Float      @default(0)
+  sellingPrice Float      @default(0)
+  expiredDate  DateTime?
+  status       StockStatus
+  createdAt    DateTime   @default(now())
+  
+  product      Product    @relation(fields: [productId], references: [id])
+  
+  @@index([productId, createdAt])
+  @@index([expiredDate])
+  @@index([createdAt])
+}
+
+model StockOut {
+  id            Int        @id @default(autoincrement())
+  productId     Int        // Add direct reference to product
+  stockInId     Int
+  userId        String
+  type StockOutType @default(SALE)
+  quantity      Int?
+  dozens        Int?        @default(0)
+  sellingPrice  Float      @default(0)
+  tax           Float      @default(0)
+  totalPrice    Float      @default(0)
+  createdAt     DateTime   @default(now())
+  
+  product       Product    @relation(fields: [productId], references: [id])
+  stockIn       StockIn    @relation(fields: [stockInId], references: [id])
+  
+  @@index([productId, createdAt])
+  @@index([stockInId])
+  @@index([createdAt])
+}
+
+model StockHistory {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  date          DateTime @default(now())  // Represents the day
+  openingStock  Int      // Stock at start of day (00:00)
+  closingStock  Int      // Stock at end of day (23:59)
+  stockIn       Int      // Total stock received that day
+  stockOut      Int      // Total stock sold that day
+  
+  product       Product  @relation(fields: [productId], references: [id])
+  
+  @@index([productId, date])
+  @@unique([productId, date])  // One record per product per day
+}

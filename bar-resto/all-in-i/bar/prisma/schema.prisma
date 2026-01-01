@@ -1,0 +1,264 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_BAR")
+}
+
+// ================== ENUMS ==================
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  LOW_STOCK
+}
+
+enum StockOutStatus {
+  SOLD
+  RETURNED
+  LOST
+  DAMAGED
+  EXPIRED
+}
+
+enum ProductType {
+  BEVERAGE
+  FOOD
+  OTHER
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum BeverageType {
+  COLD
+  HOT
+  ROOM_TEMPERATURE
+  FROZEN
+  NORMAL
+}
+
+enum BeverageSize {
+  SMALL
+  MEDIUM
+  LARGE
+  XL
+  NORMAL
+}
+
+enum BeverageCategoryType {
+  ALCOHOLIC
+  NON_ALCOHOLIC
+}
+
+enum orderItemStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+// ================== MODELS ==================
+
+model BeverageCategory {
+  id          Int                  @id @default(autoincrement())
+  name        String
+  description String?
+  type        BeverageCategoryType
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  // Relations
+  beverages Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id                 Int         @id @default(autoincrement())
+  partnerId          String
+  itemCd             String?     @unique
+  itemClCd           String?
+  itemTyCd           String?
+  taxTyCd            String?
+  productType        ProductType
+  beverageCategoryId Int?
+  name               String
+  description        String?
+  image              String?
+  imageUrl           String?
+  price              Float
+  currentStock       Int         @default(0)
+  lowStockThreshold  Int         @default(10)
+
+  // NEW: Add beverage-specific fields
+  beverageSize BeverageSize? // Only for BEVERAGE products
+  temperature  String? // Custom temperature if needed
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+  stockIns         StockIn[]
+  stockOuts        StockOut[]
+  stockHistory     StockHistory[]
+  orderItems       OrderItems[]
+  discount         Discounts?
+  beverageCategory BeverageCategory? @relation(fields: [beverageCategoryId], references: [id])
+
+
+  @@index([partnerId])
+  @@index([name])
+  @@index([currentStock])
+  @@index([productType, currentStock])
+}
+
+model Discounts {
+  id                          Int @id @default(autoincrement())
+  discountName                String
+  rate                        Float       @default(0)
+  productId                   Int         @unique
+  startDate                   DateTime
+  endDate                     DateTime
+  createdAt                   DateTime @default(now())
+  isDeleted                   Boolean  @default(false)
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model StockIn {
+  id           Int         @id @default(autoincrement())
+  productId    Int
+  userId       String
+  quantity     Int?
+  dozens       Int?        @default(0)
+  price        Float       @default(0)
+  reason       String?
+  totalPrice   Float       @default(0)
+  sellingPrice Float       @default(0)
+  expiredDate  DateTime?
+  status       StockStatus
+  createdAt    DateTime    @default(now())
+
+  // Relations
+  product    Product      @relation(fields: [productId], references: [id])
+  stockOuts  StockOut[]
+  orderItems OrderItems[] // FIXED: Added opposite relation
+
+  @@index([productId, createdAt])
+  @@index([expiredDate])
+  @@index([createdAt])
+}
+
+model StockOut {
+  id           Int            @id @default(autoincrement())
+  productId    Int
+  stockInId    Int?
+  userId       String
+  quantity     Int?
+  dozens       Int?           @default(0)
+  reason       String?
+  sellingPrice Float          @default(0)
+  tax          Float?         @default(0)
+  totalPrice   Float          @default(0)
+  status       StockOutStatus @default(SOLD)
+  createdAt    DateTime       @default(now())
+
+  // Relations
+  product Product  @relation(fields: [productId], references: [id])
+  stockIn StockIn? @relation(fields: [stockInId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([stockInId])
+  @@index([createdAt])
+}
+
+model Orders {
+  id          Int         @id @default(autoincrement())
+  orderName   String
+  userId      String
+  partnerId   String
+  quantity    Int?
+  dozens      Int?
+  tax         Float?      @default(0)
+  totalPrice  Float       @default(0)
+  status      OrderStatus
+  orderedAt   DateTime    @default(now())
+  confirmedBy String?
+  confirmedAt DateTime?
+  createdAt   DateTime    @default(now())
+
+  // Relations
+  orderItems OrderItems[] // FIXED: This already exists
+  invoices   OrderCustomers[] // FIXED: Added opposite relation
+
+  @@index([id])
+}
+
+model OrderItems {
+  id           Int             @id @default(autoincrement())
+  orderId      Int
+  productId    Int
+  stockInId    Int?
+  quantity     Int?
+  beverageType BeverageType? // NEW: Add beverage-specific fields
+  dozens       Int?
+  sellingPrice Float           @default(0)
+  totalPrice   Float           @default(0)
+  addedAt      DateTime        @default(now())
+  status       orderItemStatus @default(PENDING)
+
+  // Relations
+  order   Orders   @relation(fields: [orderId], references: [id])
+  stockIn StockIn? @relation(fields: [stockInId], references: [id])
+  product Product  @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([stockInId])
+  @@index([id])
+}
+
+model OrderCustomers {
+  id               Int                @id @default(autoincrement())
+  orderId          Int
+  name             String
+  tin              String?
+  paymentType      String?
+  mobile           String?
+  createdAt        DateTime           @default(now())
+  order            Orders             @relation(fields: [orderId], references: [id])
+  CustomerInvoices CustomerInvoices[]
+
+  @@index([orderId])
+}
+
+model CustomerInvoices {
+  id              Int @id @default(autoincrement())
+  orderCustomerId Int
+  invcNo          Int @unique
+  salesTyCd      String
+
+  // Relations
+  orderCustomer OrderCustomers @relation(fields: [orderCustomerId], references: [id])
+
+  @@index([invcNo])
+}
+
+model StockHistory {
+  id           Int      @id @default(autoincrement())
+  productId    Int
+  date         DateTime @default(now())
+  openingStock Int
+  closingStock Int
+  stockIn      Int
+  stockOut     Int
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, date])
+  @@index([productId, date])
+}

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `product` ADD COLUMN `itemTyCd` VARCHAR(191) NULL,
+    ADD COLUMN `taxTyCd` VARCHAR(191) NULL;
