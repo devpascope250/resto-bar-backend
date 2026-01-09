@@ -7,6 +7,7 @@ import prisma from "../lib/prisma";
 import { ResultData } from "@/types/models/data-clt";
 import { StockManagement, stockOutData } from "../services/StockManagement";
 import taxRounder from "../utils/taxRounding";
+import { RegenerateGetCurrent } from "../services/regenerateGetCurrent";
 interface Sales {
     customer: Customer[],
     salesTyCd: string,
@@ -34,7 +35,7 @@ interface Item {
     price: number;
     total: number;
 }
-interface OutData {
+export interface OutData {
     status: number,
     data: any[]
 }
@@ -53,6 +54,9 @@ export const salesController = {
 
         try {
             const latestInvoiceId = await apiService.fetch<number>('/get-latest-invoice-id');
+
+            console.log("the latestNumber", latestInvoiceId);
+
             // 2. Prepare all customer data in parallel
             const customerDataPromises = salesData.customer.map(async (customer) => {
                 const getitemCdNotCancelled = await prisma.orderItems.findMany({
@@ -144,7 +148,7 @@ export const salesController = {
                     if (item.taxTyCd === "B") {
                         // For 18% tax included
                         taxAmt = taxRounder(taxblAmt * 18 / 118);
-                    } 
+                    }
                     // else if (item.taxTyCd === "A") {
                     //     // For 18% tax excluded
                     //     taxAmt = taxRounder(taxblAmt * 18 / 100);
@@ -194,7 +198,7 @@ export const salesController = {
 
                 // Prepare salesTransaction
                 const salesT = {
-                    invcNo: latestInvoiceId + index + 1,
+                    invcNo: Number(latestInvoiceId) + index + 1,
                     orgInvcNo: 0,
                     custTin: customer.tin,
                     prcOrdCd: customer.prcOrdCd ?? null,
@@ -329,8 +333,7 @@ export const salesController = {
                 // Process each customer
                 for (const [index, data] of preparedCustomers.entries()) {
                     const { customer, items } = data;
-                    const invcNo = latestInvoiceId ? latestInvoiceId : 0;
-                    const invcNoCounter = invcNo + index + 1;
+                    const invcNoCounter = Number(latestInvoiceId) + index + 1;
 
                     const customerExist = await tx.orderCustomers.findUnique({
                         where: {
@@ -396,134 +399,40 @@ export const salesController = {
         const headers = {
             'EbmToken': `Bearer ${req.context?.ebm_token}`,
             'MRC-code': req.context?.mrc_code || ''
-
         }
+        const regenerate = new RegenerateGetCurrent();
+        let currentIncrement = 0;
+        const maxRetries = 5; // Set a maximum to prevent infinite loops
+
+        const fetchWithRetry = async (): Promise<any> => {
+            while (currentIncrement <= maxRetries) {
+                try {
+                    const response = await regenerate.getReceipts(headers, body, currentIncrement);
+                    console.log(`success with increment ${currentIncrement}`, response);
+                    return response;
+                } catch (err: any) {
+                    console.log(`attempt ${currentIncrement} failed`, err);
+
+                    if (err?.resultCd === 924 && currentIncrement < maxRetries) {
+                        // Increase increment by 1 for next retry
+                        currentIncrement++;
+                        console.log(`Retrying with increment ${currentIncrement}`);
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+                        continue; // Try again with new increment
+                    }
+                    throw err; // Either not error 924 or reached max retries
+                }
+            }
+            throw new Error(`Max retries (${maxRetries}) exceeded`);
+        }
+
         try {
-            if (!body.orderId || !body.type) {
-                throw new Error("orderId and type are required");
-            }
-
-            const apiService = new ApiService(headers);
-            //get latest invcNo from orderInvoices
-            const getallInvo = await prisma.customerInvoices.groupBy({
-                where: {
-                    orderCustomer: {
-                        orderId: parseInt(body.orderId),
-                    },
-                    salesTyCd: body.type === "NR" ? "NS" : body.type === "TR" ? "TS" : body.type
-                },
-                by: ["orderCustomerId"],
-                _max: {
-                    invcNo: true
-                },
-                orderBy: {
-                    _max: {
-                        invcNo: 'desc'
-                    }
-                },
-
-            });
-
-
-            const getallFreshInvo = await prisma.customerInvoices.groupBy({
-                where: {
-                    orderCustomer: {
-                        orderId: parseInt(body.orderId),
-                    },
-                    salesTyCd: body.type
-                },
-                by: ["orderCustomerId"],
-                _max: {
-                    invcNo: true
-                },
-                orderBy: {
-                    _max: {
-                        invcNo: 'desc'
-                    }
-                },
-
-            });
-
-
-
-
-            if ((body.type === "NR" || body.type === "TR") && getallInvo.length === 0) {
-                throw {
-                    message: `${body.type === "NR" ? "Normal Sale" : "Training Sale"} Invoice is not existed, You can not create Request For Refund without ${body.type === "NR" ? "Normal Sale" : "Training Sale"} Invoice`
-                }
-            }
-
-            // get all Invo group by salesTyCd and order by invcNo desc
-            const getallInvoByTyCd = await prisma.customerInvoices.groupBy({
-                where: {
-                    orderCustomer: {
-                        orderId: parseInt(body.orderId)
-                    }
-                },
-                by: ["salesTyCd"],
-                _max: {
-                    invcNo: true
-                },
-                orderBy: {
-                    _max: {
-                        invcNo: 'desc'
-                    }
-                }
-            })
-
-
-            // get greatest invcNo from getallInvo
-            const latestInvoiceId = getallInvoByTyCd[0];
-            const invcNo = latestInvoiceId ? Number(latestInvoiceId._max.invcNo) : 0;
-            const expectedNewInvId = [];
-            for (let i = 1; i <= getallInvo.length; i++) {
-                const orderCustomerId = getallInvo[i - 1].orderCustomerId;
-                expectedNewInvId.push({ invcNo: invcNo + i, orderCustomerId: orderCustomerId });
-            }
-            const getGenerated = await apiService.fetch('/generate-transaction-invoice', "POST",
-                {
-                    type: body.type,
-                    freshInv: getallFreshInvo.map((inv: any) => { return { invcNo: inv._max.invcNo } }),
-                    currentInv: getallInvo.map((inv: any) => { return { invcNo: inv._max.invcNo } }),
-                    allInvo: getallInvoByTyCd.map((inv) => { return { invcNo: inv._max.invcNo } }),
-                    ...(
-                        body.rfdRsnCd ? { rfdRsnCd: body.rfdRsnCd } : {}
-                    )
-                }
-            );
-
-            const response = await getGenerated as OutData;
-            if ((response as OutData).status === 201) {
-                for (const inv of expectedNewInvId) {
-                    await prisma.customerInvoices.upsert({
-                        where: {
-                            orderCustomerId: inv.orderCustomerId,
-                            invcNo: inv.invcNo,
-                            salesTyCd: body.type
-
-                        },
-                        update: {},
-                        create: {
-                            orderCustomerId: inv.orderCustomerId,
-                            invcNo: inv.invcNo,
-                            salesTyCd: body.type,
-                        }
-                    })
-                }
-                const upStock = new StockManagement(headers);
-
-                if (body.type === "NR") {
-                    await upStock.reverseStock(body.orderId);
-                }
-            }
-            res.status(200).json({
-                status: response.status,
-                data: response.data
-            });
-        } catch (error) {
-            console.log(error);
-
-            res.status(500).json({ message: (error as Error).message ?? (error as any).resultMsg ?? "Error getting invoices" });
+            const response = await fetchWithRetry();
+            res.json(response);
+        } catch (err: any) {
+            console.log("failed after all retries", err);
+            res.status(500).json(err);
         }
     }
+
 }

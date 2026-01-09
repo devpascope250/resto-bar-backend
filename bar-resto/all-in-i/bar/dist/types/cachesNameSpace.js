@@ -79,11 +79,12 @@ CacheNamespace.users = {
 // Order related namespaces
 CacheNamespace.orders = {
     // Get order by ID
-    order: (orderId) => ['orders', `id_${orderId}`],
+    order: (partnerId) => ['orders', `id_${partnerId}`],
+    chefOrders: (partnerId) => ['chef_order', `partner_${partnerId}`],
     // Get orders by user
     userOrders: (userId, status) => status ? ['orders', `user_${userId}_status_${status}`] : ['orders', `user_${userId}`],
     // Get orders by partner
-    partnerOrders: (partnerId, status) => status ? ['orders', `partner_${partnerId}_status_${status}`] : ['orders', `partner_${partnerId}`],
+    partnerOrders: (partnerId) => ['orders', `partner_${partnerId}`],
     // Order statistics
     statistics: (partnerId, period) => ['orders', `stats_${partnerId}_${period}_${new Date().toISOString().split('T')[0]}`]
 };

@@ -90,8 +90,8 @@ model Product {
   description        String?
   image              String?
   imageUrl           String?
-  price              Float
-  currentStock       Int         @default(0)
+  price              Decimal @db.Decimal(18, 2)
+  currentStock       Decimal @db.Decimal(10, 2)         @default(0.00)
   lowStockThreshold  Int         @default(10)
 
   // NEW: Add beverage-specific fields
@@ -133,12 +133,12 @@ model StockIn {
   id           Int         @id @default(autoincrement())
   productId    Int
   userId       String
-  quantity     Int?
+  quantity     Decimal? @db.Decimal(10, 2)
   dozens       Int?        @default(0)
-  price        Float       @default(0)
+  price        Decimal @db.Decimal(18, 2)
   reason       String?
-  totalPrice   Float       @default(0)
-  sellingPrice Float       @default(0)
+  totalPrice   Decimal @db.Decimal(18, 2)
+  sellingPrice Decimal @db.Decimal(18, 2)
   expiredDate  DateTime?
   status       StockStatus
   createdAt    DateTime    @default(now())
@@ -158,12 +158,12 @@ model StockOut {
   productId    Int
   stockInId    Int?
   userId       String
-  quantity     Int?
+  quantity     Decimal? @db.Decimal(10, 2)
   dozens       Int?           @default(0)
   reason       String?
-  sellingPrice Float          @default(0)
+  sellingPrice Decimal? @db.Decimal(18, 2)
   tax          Float?         @default(0)
-  totalPrice   Float          @default(0)
+  totalPrice   Decimal? @db.Decimal(18, 2)
   status       StockOutStatus @default(SOLD)
   createdAt    DateTime       @default(now())
 
@@ -181,10 +181,10 @@ model Orders {
   orderName   String
   userId      String
   partnerId   String
-  quantity    Int?
+  quantity    Decimal? @db.Decimal(10, 2)
   dozens      Int?
-  tax         Float?      @default(0)
-  totalPrice  Float       @default(0)
+  tax         Decimal @db.Decimal(18, 2)
+  totalPrice  Decimal @db.Decimal(18, 2)
   status      OrderStatus
   orderedAt   DateTime    @default(now())
   confirmedBy String?
@@ -203,11 +203,11 @@ model OrderItems {
   orderId      Int
   productId    Int
   stockInId    Int?
-  quantity     Int?
+  quantity     Decimal? @db.Decimal(10, 2)
   beverageType BeverageType? // NEW: Add beverage-specific fields
   dozens       Int?
-  sellingPrice Float           @default(0)
-  totalPrice   Float           @default(0)
+  sellingPrice Decimal @db.Decimal(18, 2)
+  totalPrice   Decimal @db.Decimal(18, 2)
   addedAt      DateTime        @default(now())
   status       orderItemStatus @default(PENDING)
 
@@ -251,8 +251,8 @@ model StockHistory {
   id           Int      @id @default(autoincrement())
   productId    Int
   date         DateTime @default(now())
-  openingStock Int
-  closingStock Int
+  openingStock Decimal @db.Decimal(10, 2)
+  closingStock Decimal @db.Decimal(10, 2)
   stockIn      Int
   stockOut     Int
 

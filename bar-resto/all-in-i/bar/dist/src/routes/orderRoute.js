@@ -39,6 +39,7 @@ const authMiddleware_1 = require("../middlewares/authMiddleware");
 const router = (0, express_1.Router)();
 // get orders by MANAGER
 router.get('/orders', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'CHEF', 'WAITER', 'KITCHEN', "PARTNER_ADMIN"]), orderController.getAllOrders);
+router.get('/orders/chef', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'CHEF', 'WAITER', 'KITCHEN', "PARTNER_ADMIN"]), orderController.getChefAllOrders);
 // get orders by other
 // router.get('/orders/others', authMiddleware(['CHEF','WAITER','KITCHEN']), orderController.getAllOrdersForOthers);
 router.post('/orders', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'WAITER']), orderController.createNewOrder);
@@ -50,6 +51,6 @@ router.get('/orders/:orderId', (0, authMiddleware_1.authMiddleware)(['MANAGER', 
 router.get('/orders/stats/get', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'WAITER', "CHEF", "PARTNER_ADMIN"]), orderController.getOrderStats);
 // getting all orders by productId and date
 router.get('/orders/:productId/:date', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'PARTNER_ADMIN']), orderController.getAllOrdersByProductAndDate);
-router.post('/orders/change-item-status', (0, authMiddleware_1.authMiddleware)(['MANAGER']), orderController.changeOrderItemStatus);
+router.post('/orders/change-item-status', (0, authMiddleware_1.authMiddleware)(['MANAGER', 'CHEF']), orderController.changeOrderItemStatus);
 router.post('/orders/change-all-order-status', (0, authMiddleware_1.authMiddleware)(['MANAGER']), orderController.changeAllOrderStatus);
 exports.default = router;

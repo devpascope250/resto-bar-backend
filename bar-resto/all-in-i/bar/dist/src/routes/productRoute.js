@@ -40,6 +40,8 @@ const upload_1 = require("../middlewares/upload");
 const stockManagementController_1 = require("../controllers/stockManagementController");
 const router = (0, express_1.Router)();
 router.get('/products', (0, authMiddleware_1.authMiddleware)(["MANAGER", "WAITER", "PARTNER_ADMIN"]), products.getProducts);
+router.post('/products/discount', (0, authMiddleware_1.authMiddleware)(["MANAGER", "PARTNER_ADMIN"]), products.createDiscount);
+router.delete('/products/discount/:id', (0, authMiddleware_1.authMiddleware)(["MANAGER", "PARTNER_ADMIN"]), products.deleteDiscount);
 router.post('/products', (req, res, next) => {
     (0, upload_1.UploadImages)(req, res, (err) => {
         if (err) {

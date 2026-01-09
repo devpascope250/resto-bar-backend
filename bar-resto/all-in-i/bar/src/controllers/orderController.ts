@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../lib/prisma';
-import { BeverageType, orderItemStatus, Orders, Prisma, StockOut } from '@prisma/client';
+import { BeverageType, orderItemStatus, Orders, OrderStatus, Prisma, StockOut } from '@prisma/client';
 import redisCache from '../lib/redisCache';
 import { CacheNamespace } from '../../types/cachesNameSpace';
 const toDay = new Date();
@@ -39,7 +39,11 @@ export const createNewOrder = async (request: Request, res: Response) => {
             });
         }
         const [namespace, key] = CacheNamespace.products.partner(partnerId);
+        const [namespace2, key2] = CacheNamespace.orders.chefOrders(partnerId);
+        const [namespace3, key3] = CacheNamespace.orders.partnerOrders(partnerId);
         await redisCache.delete(namespace, key);
+        await redisCache.delete(namespace2, key2);
+        await redisCache.delete(namespace3, key3);
         const data: CreateOrderRequest = request.body;
 
         // reverse recent quantity
@@ -48,7 +52,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
 
                 const existingOrder = await prisma.orders.findUnique({
                     where: { id: parseInt(orderId.toString()) },
-                    include: { 
+                    include: {
                         orderItems: {
                             select: {
                                 quantity: true,
@@ -63,7 +67,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
                 }
 
                 for (const item of existingOrder?.orderItems) {
-                    if(item.product.itemTyCd !== "3"){
+                    if (item.product.itemTyCd !== "3") {
                         await prisma.product.update({
                             where: {
                                 id: item.product.id,
@@ -172,7 +176,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
                     throw new Error(`Product with ID ${item.productId} not found`);
                 }
 
-                if (product.itemTyCd !== "3" && product.currentStock < item.quantity) {
+                if (product.itemTyCd !== "3" && Number(product.currentStock) < Number(item.quantity)) {
                     throw new Error(`Insufficient stock for product "${product.name}". Available: ${product.currentStock}, Requested: ${item.quantity}`);
                 }
 
@@ -238,14 +242,14 @@ export const createNewOrder = async (request: Request, res: Response) => {
                 }
                 // Update product quantities
                 for (const update of stockUpdates) {
-                     const findp = await tx.product.findUnique(
+                    const findp = await tx.product.findUnique(
                         {
                             where: {
                                 id: update.productId
                             }
                         }
                     );
-                    if(findp?.itemTyCd !== "3"){
+                    if (findp?.itemTyCd !== "3") {
                         await tx.product.update({
                             where: {
                                 id: update.productId,
@@ -257,7 +261,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
                                 }
                             }
                         });
-                    } 
+                    }
                 }
 
                 const itemIds = validatedItems.map(item => item.id);
@@ -315,7 +319,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
                     where: { id: parseInt(orderId.toString()) },
                     data: {
                         orderName: data.orderName,
-                        totalPrice: getIt.reduce((acc, item) => acc + (item.sellingPrice * (item.quantity ?? 0)), 0)
+                        totalPrice: getIt.reduce((acc, item) => acc + (Number(item.sellingPrice) * Number(item.quantity ?? 0)), 0)
                     }
                 })
                 return {
@@ -338,6 +342,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
                 // Create new order first
                 const newOrder = await tx.orders.create({
                     data: {
+                        tax: 0,
                         orderName: data.orderName,
                         status: "PENDING",
                         userId: userId,
@@ -411,7 +416,7 @@ export const createNewOrder = async (request: Request, res: Response) => {
             }
         });
 
-      return res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: `Order ${orderId ? 'updated' : 'created'} successfully`,
             data: result
@@ -423,14 +428,14 @@ export const createNewOrder = async (request: Request, res: Response) => {
         // Handle specific Prisma errors
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
             if (error.code === 'P2025') {
-               return res.status(404).json({
+                return res.status(404).json({
                     success: false,
                     message: 'Order not found'
                 });
             }
 
             if (error.code === 'P2002') {
-               return res.status(400).json({
+                return res.status(400).json({
                     success: false,
                     message: 'Duplicate entry found'
                 });
@@ -450,12 +455,15 @@ export const getOrderDetails = async (req: Request, res: Response) => {
         const role = req.user?.role;
         const userId = req.user?.id;
         const orderDetail = req.query.orderDetail;
-        if (!userId && !role) {
+        const partnerId = req?.user?.partnerId;
+        if (!userId && !role && !partnerId) {
             return res.status(401).json({
                 success: false,
                 message: 'Not authorized'
             });
         }
+
+       
         const order = await prisma.orders.findFirst({
             where: {
                 id: parseInt(orderId),
@@ -541,6 +549,8 @@ export const getOrderDetails = async (req: Request, res: Response) => {
             });
         }
 
+        
+
         return res.status(200).json(newOrder);
     } catch (error) {
         console.error('Get order error:', error);
@@ -603,6 +613,12 @@ export const getAllOrders = async (req: Request, res: Response) => {
                 message: 'Not authorized'
             });
         }
+
+        //  const [namespace, key] = CacheNamespace.orders.partnerOrders(partnerId ?? "");
+        // const cache = await redisCache.get(namespace, key);
+        // if(cache && !startDate && !endDate){
+        //     return res.json(cache);
+        // }
         const orders = await prisma.orders.findMany({
             where: whereCondition,
             include: {
@@ -618,6 +634,9 @@ export const getAllOrders = async (req: Request, res: Response) => {
                 createdAt: 'desc'
             }
         });
+
+        // console.log(orders);
+        
         const newOrder = orders.map((order) => {
             return {
                 id: order.id,
@@ -626,10 +645,140 @@ export const getAllOrders = async (req: Request, res: Response) => {
                 createdAt: order.createdAt.toLocaleString(),
                 distributor: order.userId,
                 totalPrice: order.totalPrice,
-                invoices: order.invoices,
+                invoices: order?.invoices.map((customer) => ({
+                id: customer.id,
+                name: customer.name,
+                mobile: customer.mobile,
+                tin: customer.tin,
+                paymentType: customer.paymentType
+            })),
             }
         });
+        // await redisCache.save(namespace, key, newOrder);
         return res.json(newOrder);
+    } catch (error) {
+        console.log(error)
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+}
+
+
+export const getChefAllOrders = async (req: Request, res: Response) => {
+    try {
+        const userId = req.user?.id;
+        const partnerId = req.user?.partnerId;
+        const role = req.user?.role;
+
+
+        const endDate = req.query.end as string;
+        const startDate = req.query.start as string;
+        const dateFilter: any = {};
+
+        if (startDate) {
+            const start = new Date(startDate);
+            start.setHours(0, 0, 0, 0);
+            dateFilter.gte = start;
+        }
+
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            dateFilter.lte = end;
+        }
+
+        // Only apply date filter if at least one date is provided
+        const whereCondition: any = {
+            partnerId: partnerId,
+            userId: (role === 'MANAGER' || role === 'PARTNER_ADMIN' || role === 'CHEF') ? undefined : userId,
+            orderItems: {
+                some: {
+                    product: {
+                        partnerId: partnerId,
+                        productType: "FOOD"
+                    },
+                }
+            }
+        };
+        if (startDate || endDate) {
+            whereCondition.createdAt = dateFilter;
+        } else {
+            whereCondition.createdAt = {
+                gte: thisDay,
+            };
+        }
+
+
+        if (!userId || !partnerId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Not authorized'
+            });
+        }
+        const [namespace, key] = CacheNamespace.orders.chefOrders(partnerId);
+        const ordersItems = await redisCache.get(namespace, key);
+        if(ordersItems){
+            return res.json(ordersItems);
+        }
+        const orders = await prisma.orders.findMany({
+            where: whereCondition,
+            select: {
+                id: true,
+                orderName: true,
+                userId: true,
+                partnerId: true,
+                quantity: true,
+                dozens: true,
+                tax: true,
+                totalPrice: true,
+                status: true,
+                orderedAt: true,
+                confirmedBy: true,
+                confirmedAt: true,
+                createdAt: true,
+                orderItems: {
+                    select: {
+                        id: true,
+                        product: {
+                            select: {
+                                id: true,
+                                name: true,
+                                productType: true,
+                                beverageSize: true,
+                                temperature: true,
+                                beverageCategory: {
+                                    select: {
+                                        name: true,
+                                        type: true
+                                    }
+                                }
+                            }
+                        },
+                        orderId: true,
+                        productId: true,
+                        quantity: true,
+                        sellingPrice: true,
+                        totalPrice: true,
+                        addedAt: true,
+                        status: true
+
+                    },
+                    where: {
+                        // status: { not: "CANCELLED" }
+                    },
+
+                },
+                // invoices: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        await redisCache.save(namespace, key, orders);
+        
+        return res.json(orders);
     } catch (error) {
         console.log(error)
         return res.status(500).json({
@@ -785,7 +934,11 @@ export const changeOrderStatus = async (req: Request, res: Response) => {
             });
         }
         const [namespace, key] = CacheNamespace.products.partner(partnerId);
+        const [namespace2, key2] = CacheNamespace.orders.chefOrders(partnerId);
+        const [namespace3, key3] = CacheNamespace.orders.partnerOrders(partnerId);
         await redisCache.delete(namespace, key);
+        await redisCache.delete(namespace2, key2);
+        await redisCache.delete(namespace3, key3);
 
         if (status === "CANCELLED") {
             await prisma.$transaction(async (tx) => {
@@ -794,7 +947,7 @@ export const changeOrderStatus = async (req: Request, res: Response) => {
                         id: parseInt(orderId),
                     },
                     data: {
-                        status: status
+                        status: status as OrderStatus
                     }
                 });
 
@@ -898,7 +1051,8 @@ export const getOrderStats = async (req: Request, res: Response) => {
         thirtyDaysAgo.setHours(0, 0, 0, 0); // Start of day 30 days ago
 
         const whereClause: any = {
-            partnerId: partnerId
+            partnerId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? partnerId : undefined,
+            userId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? undefined : userId
         };
 
         // Only add date filter if dates are provided
@@ -930,7 +1084,9 @@ export const getOrderStats = async (req: Request, res: Response) => {
 
         const recent5Orders = await prisma.orders.findMany({
             where: {
-                partnerId: partnerId,
+                partnerId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? partnerId : undefined,
+                userId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? undefined : userId
+
             },
             take: 5,
             orderBy: {
@@ -953,7 +1109,7 @@ export const getOrderStats = async (req: Request, res: Response) => {
         const salesData = Object.keys(groupedOrders).map((date) => {
             const orders = groupedOrders[date];
             const revenue = orders.reduce((acc, order) => {
-                return acc + order.totalPrice;
+                return acc + Number(order.totalPrice);
             }, 0);
             const ordersCount = orders.length
             const averageOrderValue = revenue / ordersCount
@@ -987,7 +1143,7 @@ export const getOrderStats = async (req: Request, res: Response) => {
                 pendingOrders: pendingOrders,
                 cancelledOrders: cancelledOrders,
                 successRate: successRate ? successRate.toFixed(1).toString() + " %" : '0 %',
-                revenues: orders.reduce((acc, order) => acc + order.totalPrice, 0)
+                revenues: orders.reduce((acc, order) => acc + Number(order.totalPrice), 0)
             }
         })
     } catch (error) {
@@ -997,6 +1153,7 @@ export const getOrderStats = async (req: Request, res: Response) => {
 
 
 export const changeOrderItemStatus = async (req: Request, res: Response) => {
+    
     try {
         const { itemId, status } = req.body;
         const userId = req?.user?.id;
@@ -1039,7 +1196,7 @@ export const changeOrderItemStatus = async (req: Request, res: Response) => {
                         },
                         data: {
                             totalPrice: {
-                                increment: (orderItem.sellingPrice ?? 0) * (orderItem.quantity ?? 0)
+                                increment: (Number(orderItem.sellingPrice) ?? 0) * Number(orderItem.quantity ?? 0)
                             }
                         }
                     }
@@ -1085,7 +1242,7 @@ export const changeOrderItemStatus = async (req: Request, res: Response) => {
                     },
                     data: {
                         totalPrice: {
-                            decrement: (orderItem.sellingPrice ?? 0) * (orderItem.quantity ?? 0)
+                            decrement: (Number(orderItem.sellingPrice) ?? 0) * Number(orderItem.quantity ?? 0)
                         }
                     }
 
@@ -1093,6 +1250,9 @@ export const changeOrderItemStatus = async (req: Request, res: Response) => {
 
             })
         }
+
+        const [namespace, key] = CacheNamespace.orders.chefOrders(partnerId);
+        await redisCache.delete(namespace, key);
         return res.status(200).json({ message: 'success' });
 
     } catch (error) {
@@ -1111,7 +1271,6 @@ export const changeAllOrderStatus = async (req: Request, res: Response) => {
         if (!role || !partnerId || !userId) {
             return res.status(401).json({ message: 'you are authorized for this service.' });
         }
-
         // get all items
 
         const allitems = await prisma.orderItems.findMany({
@@ -1139,7 +1298,7 @@ export const changeAllOrderStatus = async (req: Request, res: Response) => {
                         where: { id: item.orderId },
                         data: {
                             totalPrice: {
-                                increment: (item.sellingPrice ?? 0) * (item.quantity ?? 0)
+                                increment: (Number(item.sellingPrice) ?? 0) * Number(item.quantity ?? 0)
                             }
                         }
                     });
@@ -1151,7 +1310,8 @@ export const changeAllOrderStatus = async (req: Request, res: Response) => {
                 });
             }
         });
-
+        const [namespace, key] = CacheNamespace.orders.chefOrders(partnerId);
+        await redisCache.delete(namespace, key);
         return res.status(200).json({ message: 'success' });
 
     } catch (error) {

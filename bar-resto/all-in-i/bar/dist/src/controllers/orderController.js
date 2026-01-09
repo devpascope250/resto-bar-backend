@@ -3,9 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.changeAllOrderStatus = exports.changeOrderItemStatus = exports.getOrderStats = exports.changeOrderStatus = exports.getAllOrdersForOthers = exports.getAllOrdersByProductAndDate = exports.getAllOrders = exports.getOrderDetails = exports.createNewOrder = void 0;
+exports.changeAllOrderStatus = exports.changeOrderItemStatus = exports.getOrderStats = exports.changeOrderStatus = exports.getAllOrdersForOthers = exports.getAllOrdersByProductAndDate = exports.getChefAllOrders = exports.getAllOrders = exports.getOrderDetails = exports.createNewOrder = void 0;
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const client_1 = require("@prisma/client");
+const redisCache_1 = __importDefault(require("../lib/redisCache"));
+const cachesNameSpace_1 = require("../../types/cachesNameSpace");
 const toDay = new Date();
 const month = toDay.getMonth() + 1;
 const year = toDay.getFullYear();
@@ -27,6 +29,12 @@ const createNewOrder = async (request, res) => {
                 message: 'You are not authorized for this service!'
             });
         }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.products.partner(partnerId);
+        const [namespace2, key2] = cachesNameSpace_1.CacheNamespace.orders.chefOrders(partnerId);
+        const [namespace3, key3] = cachesNameSpace_1.CacheNamespace.orders.partnerOrders(partnerId);
+        await redisCache_1.default.delete(namespace, key);
+        await redisCache_1.default.delete(namespace2, key2);
+        await redisCache_1.default.delete(namespace3, key3);
         const data = request.body;
         // reverse recent quantity
         if (data === null || data === void 0 ? void 0 : data.delete_current) {
@@ -85,6 +93,23 @@ const createNewOrder = async (request, res) => {
                 message: 'Order name and at least one item are required'
             });
         }
+        // get all discounts
+        const discounts = await prisma_1.default.discounts.findMany({
+            where: {
+                isDeleted: false,
+                productId: {
+                    in: data.items.map((item) => item.productId)
+                }
+            }
+        });
+        const findDiscount = (productId, price) => {
+            var _a;
+            const dis = (_a = discounts.find((discount) => discount.productId === productId)) === null || _a === void 0 ? void 0 : _a.rate;
+            if (dis) {
+                return price - (price * dis) / 100;
+            }
+            return price;
+        };
         // Validate items and calculate total
         let totalPrice = 0;
         const validatedItems = [];
@@ -107,7 +132,7 @@ const createNewOrder = async (request, res) => {
                     message: 'Selling price cannot be negative'
                 });
             }
-            const itemTotal = item.quantity * item.sellingPrice;
+            const itemTotal = item.quantity * (findDiscount(item.productId, item.sellingPrice));
             totalPrice += itemTotal;
             validatedItems.push(item);
         }
@@ -224,15 +249,15 @@ const createNewOrder = async (request, res) => {
                             beverageType: item.beverageType,
                             productId: item.productId,
                             quantity: item.quantity,
-                            sellingPrice: item.sellingPrice,
-                            totalPrice: item.quantity * item.sellingPrice,
+                            sellingPrice: findDiscount(item.productId, item.sellingPrice),
+                            totalPrice: item.quantity * findDiscount(item.productId, item.sellingPrice),
                         },
                         create: {
                             beverageType: item.beverageType,
                             productId: item.productId,
                             quantity: item.quantity,
-                            sellingPrice: item.sellingPrice,
-                            totalPrice: item.quantity * item.sellingPrice,
+                            sellingPrice: findDiscount(item.productId, item.sellingPrice),
+                            totalPrice: item.quantity * findDiscount(item.productId, item.sellingPrice),
                             orderId: parseInt(orderId.toString())
                         }
                     });
@@ -258,7 +283,10 @@ const createNewOrder = async (request, res) => {
                         totalPrice: getIt.reduce((acc, item) => { var _a; return acc + (item.sellingPrice * ((_a = item.quantity) !== null && _a !== void 0 ? _a : 0)); }, 0)
                     }
                 });
-                return res.json({ message: 'Order updated successfully' });
+                return {
+                    type: "UPDATED",
+                    id: parseInt(orderId.toString())
+                };
             }
             else {
                 // Check is orderName is existed on pending Order
@@ -285,8 +313,8 @@ const createNewOrder = async (request, res) => {
                                 beverageType: item.beverageType,
                                 productId: item.productId,
                                 quantity: item.quantity,
-                                sellingPrice: item.sellingPrice,
-                                totalPrice: item.quantity * item.sellingPrice,
+                                sellingPrice: findDiscount(item.productId, item.sellingPrice),
+                                totalPrice: item.quantity * findDiscount(item.productId, item.sellingPrice)
                             }))
                         }
                     },
@@ -373,13 +401,14 @@ const createNewOrder = async (request, res) => {
 exports.createNewOrder = createNewOrder;
 // Additional helper function to get order details
 const getOrderDetails = async (req, res) => {
-    var _a, _b;
+    var _a, _b, _c;
     try {
         const { orderId } = req.params;
         const role = (_a = req.user) === null || _a === void 0 ? void 0 : _a.role;
         const userId = (_b = req.user) === null || _b === void 0 ? void 0 : _b.id;
         const orderDetail = req.query.orderDetail;
-        if (!userId && !role) {
+        const partnerId = (_c = req === null || req === void 0 ? void 0 : req.user) === null || _c === void 0 ? void 0 : _c.partnerId;
+        if (!userId && !role && !partnerId) {
             return res.status(401).json({
                 success: false,
                 message: 'Not authorized'
@@ -419,7 +448,8 @@ const getOrderDetails = async (req, res) => {
                                         name: true,
                                         type: true
                                     }
-                                }
+                                },
+                                discount: true
                             }
                         }
                     }
@@ -457,7 +487,8 @@ const getOrderDetails = async (req, res) => {
                         price: item.product.price,
                         currentStock: item.product.currentStock,
                         description: item.product.description,
-                        image: item.product.image ? `${process.env.IMAGE_URL}/${item.product.image}` : item.product.imageUrl
+                        image: item.product.image ? `${process.env.IMAGE_URL}/${item.product.image}` : item.product.imageUrl,
+                        discount: item.product.discount
                     }
                 });
             })
@@ -525,6 +556,11 @@ const getAllOrders = async (req, res) => {
                 message: 'Not authorized'
             });
         }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.orders.partnerOrders(partnerId !== null && partnerId !== void 0 ? partnerId : "");
+        const cache = await redisCache_1.default.get(namespace, key);
+        if (cache) {
+            return res.json(cache);
+        }
         const orders = await prisma_1.default.orders.findMany({
             where: whereCondition,
             include: {
@@ -547,9 +583,16 @@ const getAllOrders = async (req, res) => {
                 createdAt: order.createdAt.toLocaleString(),
                 distributor: order.userId,
                 totalPrice: order.totalPrice,
-                invoices: order.invoices,
+                invoices: order === null || order === void 0 ? void 0 : order.invoices.map((customer) => ({
+                    id: customer.id,
+                    name: customer.name,
+                    mobile: customer.mobile,
+                    tin: customer.tin,
+                    paymentType: customer.paymentType
+                })),
             };
         });
+        await redisCache_1.default.save(namespace, key, newOrder);
         return res.json(newOrder);
     }
     catch (error) {
@@ -561,6 +604,121 @@ const getAllOrders = async (req, res) => {
     }
 };
 exports.getAllOrders = getAllOrders;
+const getChefAllOrders = async (req, res) => {
+    var _a, _b, _c;
+    try {
+        const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.id;
+        const partnerId = (_b = req.user) === null || _b === void 0 ? void 0 : _b.partnerId;
+        const role = (_c = req.user) === null || _c === void 0 ? void 0 : _c.role;
+        const endDate = req.query.end;
+        const startDate = req.query.start;
+        const dateFilter = {};
+        if (startDate) {
+            const start = new Date(startDate);
+            start.setHours(0, 0, 0, 0);
+            dateFilter.gte = start;
+        }
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            dateFilter.lte = end;
+        }
+        // Only apply date filter if at least one date is provided
+        const whereCondition = {
+            partnerId: partnerId,
+            userId: (role === 'MANAGER' || role === 'PARTNER_ADMIN' || role === 'CHEF') ? undefined : userId,
+            orderItems: {
+                some: {
+                    product: {
+                        partnerId: partnerId,
+                        productType: "FOOD"
+                    },
+                }
+            }
+        };
+        if (startDate || endDate) {
+            whereCondition.createdAt = dateFilter;
+        }
+        else {
+            whereCondition.createdAt = {
+                gte: thisDay,
+            };
+        }
+        if (!userId || !partnerId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Not authorized'
+            });
+        }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.orders.chefOrders(partnerId);
+        const ordersItems = await redisCache_1.default.get(namespace, key);
+        if (ordersItems) {
+            return res.json(ordersItems);
+        }
+        const orders = await prisma_1.default.orders.findMany({
+            where: whereCondition,
+            select: {
+                id: true,
+                orderName: true,
+                userId: true,
+                partnerId: true,
+                quantity: true,
+                dozens: true,
+                tax: true,
+                totalPrice: true,
+                status: true,
+                orderedAt: true,
+                confirmedBy: true,
+                confirmedAt: true,
+                createdAt: true,
+                orderItems: {
+                    select: {
+                        id: true,
+                        product: {
+                            select: {
+                                id: true,
+                                name: true,
+                                productType: true,
+                                beverageSize: true,
+                                temperature: true,
+                                beverageCategory: {
+                                    select: {
+                                        name: true,
+                                        type: true
+                                    }
+                                }
+                            }
+                        },
+                        orderId: true,
+                        productId: true,
+                        quantity: true,
+                        sellingPrice: true,
+                        totalPrice: true,
+                        addedAt: true,
+                        status: true
+                    },
+                    where: {
+                    // status: { not: "CANCELLED" }
+                    },
+                },
+                // invoices: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        await redisCache_1.default.save(namespace, key, orders);
+        return res.json(orders);
+    }
+    catch (error) {
+        console.log(error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.getChefAllOrders = getChefAllOrders;
 // get all orders by productId and date
 const getAllOrdersByProductAndDate = async (req, res) => {
     var _a, _b;
@@ -694,16 +852,23 @@ const getAllOrdersForOthers = async (req, res) => {
 exports.getAllOrdersForOthers = getAllOrdersForOthers;
 // change Order status
 const changeOrderStatus = async (req, res) => {
-    var _a;
+    var _a, _b;
     try {
         const { orderId, status } = req.body;
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a.id;
-        if (!userId) {
+        const partnerId = (_b = req.user) === null || _b === void 0 ? void 0 : _b.partnerId;
+        if (!userId || !partnerId) {
             return res.status(401).json({
                 success: false,
                 message: 'Not authorized'
             });
         }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.products.partner(partnerId);
+        const [namespace2, key2] = cachesNameSpace_1.CacheNamespace.orders.chefOrders(partnerId);
+        const [namespace3, key3] = cachesNameSpace_1.CacheNamespace.orders.partnerOrders(partnerId);
+        await redisCache_1.default.delete(namespace, key);
+        await redisCache_1.default.delete(namespace2, key2);
+        await redisCache_1.default.delete(namespace3, key3);
         if (status === "CANCELLED") {
             await prisma_1.default.$transaction(async (tx) => {
                 var _a;
@@ -811,7 +976,8 @@ const getOrderStats = async (req, res) => {
         thirtyDaysAgo.setDate(today.getDate() - 30);
         thirtyDaysAgo.setHours(0, 0, 0, 0); // Start of day 30 days ago
         const whereClause = {
-            partnerId: partnerId
+            partnerId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? partnerId : undefined,
+            userId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? undefined : userId
         };
         // Only add date filter if dates are provided
         if (startDate || endDate) {
@@ -839,7 +1005,8 @@ const getOrderStats = async (req, res) => {
         });
         const recent5Orders = await prisma_1.default.orders.findMany({
             where: {
-                partnerId: partnerId,
+                partnerId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? partnerId : undefined,
+                userId: (role === "PARTNER_ADMIN" || role === "MANAGER") ? undefined : userId
             },
             take: 5,
             orderBy: {
@@ -988,6 +1155,8 @@ const changeOrderItemStatus = async (req, res) => {
                 });
             });
         }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.orders.chefOrders(partnerId);
+        await redisCache_1.default.delete(namespace, key);
         return res.status(200).json({ message: 'success' });
     }
     catch (error) {
@@ -1041,6 +1210,8 @@ const changeAllOrderStatus = async (req, res) => {
                 });
             }
         });
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.orders.chefOrders(partnerId);
+        await redisCache_1.default.delete(namespace, key);
         return res.status(200).json({ message: 'success' });
     }
     catch (error) {

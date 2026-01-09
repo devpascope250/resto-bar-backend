@@ -1,7 +1,7 @@
 import { ItemsList, ItemsListStockin } from "@/types/models/ItemsList";
 import { ApiService } from "../utils/ApiService";
 import { ResultData } from "@/types/models/data-clt";
-import { StockInOutData } from "@/types/models/StockInOutData";
+import { StockInOutData, StockInOutSaveItem } from "@/types/models/StockInOutData";
 import { DateUtils } from "../utils/date-time";
 import prisma from "../lib/prisma";
 import { ListImportItem } from "@/types/models/ListImportItem";
@@ -81,7 +81,7 @@ export class StockManagement extends ApiService {
                 const item = itemCd.find(i => i.itemCd === product.itemCd);
                 return {
                     itemCd: product.itemCd,
-                    currentStock: (type === "IN" && mode !== "CREATE") ? product.currentStock + (item?.quantity ?? 0) : product.currentStock
+                    currentStock: (type === "IN" && mode !== "CREATE") ? Number(product.currentStock) + Number(item?.quantity ?? 0) : Number(product.currentStock)
                 }
             }
         });
@@ -89,13 +89,34 @@ export class StockManagement extends ApiService {
     }
 
 
-    createStockIn = async (ItemDt: ItemDt[], stockinType: string): Promise<ResultData> => {
+    createStockIn = async (ItemDt: ItemDt[], stockinType: string, itemByCreat?: StockInOutSaveItem): Promise<ResultData> => {
         const itemData = await this.getItemsByItemCd(ItemDt.map(item => ({ itemCd: item.itemCd })));
         const getSingleItem = (itemCd: string) => itemData.find(item => item.itemCd === itemCd);
         const getSingleItemFromItemDt = (itemCd: string) => ItemDt.find(item => item.itemCd === itemCd);
         const TotalTaxableAmount = ItemDt.reduce((acc, item) => acc + item?.itemCd ? (getSingleItem(item?.itemCd)?.taxTyCd === "B" ? (item.price * item.quantity) : 0) : 0, 0);
         const TotalTaxAmount = TotalTaxableAmount * 18 / 118;
         const TotalAmount = ItemDt.reduce((acc, item) => acc + item.price, 0);
+        const saveStockInOutItems: StockInOutSaveItem[] = [
+            {
+                itemSeq: 1,
+                itemCd: itemByCreat?.itemCd ?? "",
+                itemClsCd: itemByCreat?.itemClsCd ?? "",
+                itemNm: itemByCreat?.itemNm ?? "",
+                bcd: null,
+                pkgUnitCd: itemByCreat?.pkgUnitCd ?? "",
+                pkg: itemByCreat?.pkg ?? 0,
+                qtyUnitCd: itemByCreat?.qtyUnitCd ?? "",
+                qty: itemByCreat?.qty ?? 0,
+                itemExprDt: '',
+                prc: itemByCreat?.prc ?? 0,
+                splyAmt: itemByCreat?.splyAmt ?? 0,
+                totDcAmt: 0,
+                taxblAmt: itemByCreat?.taxblAmt ?? 0,
+                taxTyCd: itemByCreat?.taxTyCd ?? "",
+                taxAmt: itemByCreat?.taxAmt ?? 0,
+                totAmt: itemByCreat?.totAmt ?? 0,
+            }
+        ];
         const stockInData: StockInOutData = {
             regTyCd: 'A',
             custTin: null,
@@ -103,7 +124,7 @@ export class StockManagement extends ApiService {
             custBhfId: null,
             sarTyCd: stockinType,
             ocrnDt: DateUtils.formatToYYYYMMDD(new Date()),
-            totItemCnt: itemData.length,
+            totItemCnt: itemByCreat ? 1 : itemData.length,
             totTaxblAmt: TotalTaxableAmount,
             totTaxAmt: taxRounder(TotalTaxAmount),
             totAmt: TotalAmount,
@@ -112,7 +133,7 @@ export class StockManagement extends ApiService {
             regrId: "admin",
             modrNm: "admin",
             modrId: "admin",
-            itemList: itemData.map((item, index) => ({
+            itemList: itemByCreat ? saveStockInOutItems : itemData.map((item, index) => ({
                 itemSeq: index + 1,
                 itemCd: item.itemCd,
                 itemClsCd: item.itemClsCd,
@@ -132,6 +153,12 @@ export class StockManagement extends ApiService {
                 totAmt: ((item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.price ?? 0) : 0) * (item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.quantity ?? 0) : 0)),
             }))
         }
+
+        console.log('the results', itemData);
+
+
+        console.log(stockInData);
+
         const result = await this.fetch<ResultData>('/saveStockItems', "POST", stockInData);
         return result;
     }
@@ -151,7 +178,7 @@ export class StockManagement extends ApiService {
             custBhfId: null,
             sarTyCd: stockinType,
             ocrnDt: DateUtils.formatToYYYYMMDD(new Date()),
-            totItemCnt: itemData.length,
+            totItemCnt: itemData.length ?? 1,
             totTaxblAmt: TotalTaxableAmount,
             totTaxAmt: taxRounder(TotalTaxAmount),
             totAmt: TotalAmount,

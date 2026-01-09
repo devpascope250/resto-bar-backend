@@ -3,12 +3,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getMonthlyStockReportCalculation = exports.stockOut = exports.stockIn = exports.editProduct = exports.deleteProduct = exports.addProduct = exports.getProducts = void 0;
+exports.deleteDiscount = exports.createDiscount = exports.getMonthlyStockReportCalculation = exports.stockOut = exports.stockIn = exports.editProduct = exports.deleteProduct = exports.addProduct = exports.getProducts = void 0;
 const prisma_1 = __importDefault(require("../lib/prisma"));
 const paths_1 = require("../utils/paths");
 const ApiService_1 = require("../utils/ApiService");
 const redisCache_1 = __importDefault(require("../lib/redisCache"));
 const cachesNameSpace_1 = require("../../types/cachesNameSpace");
+const StockManagement_1 = require("../services/StockManagement");
 const getProducts = async (req, res) => {
     var _a, _b;
     const partnerId = (_a = req === null || req === void 0 ? void 0 : req.user) === null || _a === void 0 ? void 0 : _a.partnerId;
@@ -114,11 +115,12 @@ const getProducts = async (req, res) => {
                         type: true,
                         description: true
                     }
-                }
+                },
+                discount: true
             }
         });
         const newProducts = products.map((product) => {
-            return Object.assign(Object.assign({}, product), { image: product.image ? `${process.env.IMAGE_URL}/${product.image}` : product.imageUrl });
+            return Object.assign(Object.assign({}, product), { discount: (product.discount && !product.discount.isDeleted) ? product.discount : null, image: product.image ? `${process.env.IMAGE_URL}/${product.image}` : product.imageUrl });
         });
         await redisCache_1.default.save(namespace, key, newProducts);
         return res.status(200).json(newProducts);
@@ -181,6 +183,9 @@ const addProduct = async (req, res) => {
                 imageUrl: imageUrl ? imageUrl : null
             }
         });
+        const stoctOut = new StockManagement_1.StockManagement(headers);
+        await stoctOut.saveStockMaster([{ itemCd: itemCd, quantity: currentStock ? parseInt(currentStock) : 0 }], "IN", "CREATE");
+        await stoctOut.createStockIn([{ itemCd: itemCd, itemNm: name, price: parseInt(price), quantity: currentStock ? parseInt(currentStock) : 0 }], '00');
         await redisCache_1.default.delete(namespace, key);
         return res.status(200).json({ message: "successFul recorded" });
     }
@@ -437,6 +442,62 @@ const getMonthlyStockReportCalculation = async (req, res) => {
     }
 };
 exports.getMonthlyStockReportCalculation = getMonthlyStockReportCalculation;
+// create discount
+const createDiscount = async (req, res) => {
+    var _a;
+    try {
+        const partnerId = (_a = req === null || req === void 0 ? void 0 : req.user) === null || _a === void 0 ? void 0 : _a.partnerId;
+        if (!partnerId) {
+            return res.status(404).json({
+                message: 'Your`re UnAuthorized for this actions \n there is not Organization assigned to you'
+            });
+        }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.products.partner(partnerId);
+        await redisCache_1.default.delete(namespace, key);
+        await prisma_1.default.discounts.create({
+            data: Object.assign(Object.assign({}, req.body), { productId: parseInt(req.body.productId) })
+        });
+        return res.status(200).json({ message: "successFul recorded" });
+    }
+    catch (error) {
+        console.log(error);
+        return res.status(500).json({
+            message: error
+        });
+    }
+};
+exports.createDiscount = createDiscount;
+// delete discount
+const deleteDiscount = async (req, res) => {
+    var _a;
+    const discountId = req.params.id;
+    try {
+        const partnerId = (_a = req === null || req === void 0 ? void 0 : req.user) === null || _a === void 0 ? void 0 : _a.partnerId;
+        if (!partnerId) {
+            return res.status(404).json({
+                message: 'Your`re UnAuthorized for this actions \n there is not Organization assigned to you'
+            });
+        }
+        const [namespace, key] = cachesNameSpace_1.CacheNamespace.products.partner(partnerId);
+        await redisCache_1.default.delete(namespace, key);
+        await prisma_1.default.discounts.update({
+            where: {
+                id: parseInt(discountId)
+            },
+            data: {
+                isDeleted: true
+            }
+        });
+        return res.status(200).json({ message: "successFul recorded" });
+    }
+    catch (error) {
+        console.log(error);
+        return res.status(500).json({
+            message: error
+        });
+    }
+};
+exports.deleteDiscount = deleteDiscount;
 // 1. DAILY STOCK SNAPSHOT JOB (runs at midnight)
 async function createDailyStockSnapshot(partnerId) {
     const products = await prisma_1.default.product.findMany({

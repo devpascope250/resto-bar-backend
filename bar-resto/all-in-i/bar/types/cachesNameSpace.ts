@@ -45,15 +45,14 @@ export class CacheNamespace {
   // Order related namespaces
   static orders = {
     // Get order by ID
-    order: (orderId: string): [string, string] => ['orders', `id_${orderId}`],
-    
+    order: (partnerId: string): [string, string] => ['orders', `id_${partnerId}`],
+    chefOrders: (partnerId: string): [string, string] => ['chef_order', `partner_${partnerId}`],
     // Get orders by user
     userOrders: (userId: string, status?: string): [string, string] => 
       status ? ['orders', `user_${userId}_status_${status}`] : ['orders', `user_${userId}`],
     
     // Get orders by partner
-    partnerOrders: (partnerId: string, status?: string): [string, string] => 
-      status ? ['orders', `partner_${partnerId}_status_${status}`] : ['orders', `partner_${partnerId}`],
+    partnerOrders: (partnerId: string): [string, string] => ['orders', `partner_${partnerId}`],
     
     // Order statistics
     statistics: (partnerId: string, period: 'day' | 'week' | 'month'): [string, string] => 
