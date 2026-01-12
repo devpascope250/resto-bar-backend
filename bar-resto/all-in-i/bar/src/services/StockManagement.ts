@@ -179,9 +179,9 @@ export class StockManagement extends ApiService {
             sarTyCd: stockinType,
             ocrnDt: DateUtils.formatToYYYYMMDD(new Date()),
             totItemCnt: itemData.length ?? 1,
-            totTaxblAmt: TotalTaxableAmount,
+            totTaxblAmt: taxRounder(TotalTaxableAmount),
             totTaxAmt: taxRounder(TotalTaxAmount),
-            totAmt: TotalAmount,
+            totAmt: taxRounder(Number(TotalAmount)),
             remark: null,
             regrNm: "admin",
             regrId: "admin",
@@ -199,14 +199,17 @@ export class StockManagement extends ApiService {
                 qty: (item?.itemCd ? getSingleItemFromItemDt(item?.itemCd)?.quantity : 0) ?? 0,
                 itemExprDt: item.itemExprDt,
                 prc: (item?.itemCd ? getSingleItemFromItemDt(item?.itemCd)?.price : 0) ?? 0,
-                splyAmt: TotalAmount,
+                splyAmt: taxRounder(Number(TotalAmount)),
                 totDcAmt: 0,
                 taxblAmt: item.taxTyCd === "B" ? ((item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.price ?? 0) : 0) * (item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.quantity ?? 0) : 0)) : 0,
                 taxTyCd: item.taxTyCd,
                 taxAmt: taxRounder(item.taxTyCd === "B" ? ((item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.price ?? 0) : 0) * (item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.quantity ?? 0) : 0)) * 18 / 118 : 0),
-                totAmt: ((item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.price ?? 0) : 0) * (item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.quantity ?? 0) : 0)),
+                totAmt: taxRounder((item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.price ?? 0) : 0) * (item?.itemCd ? (getSingleItemFromItemDt(item?.itemCd)?.quantity ?? 0) : 0)),
             }))
         }
+
+        console.log('Inner checking', stockInData);
+        
         let result: ResultData = {} as ResultData;
         await prisma.$transaction(async (tx) => {
             for (const item of ItemDt.stock) {
